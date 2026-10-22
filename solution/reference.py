@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exact support search for a fixed-charge solvent blend."""
+"""Reconcile anonymous lot bundles, then solve the fixed-charge blend."""
 
 from __future__ import annotations
 
@@ -13,33 +13,38 @@ from itertools import combinations, product
 from pathlib import Path
 
 
-INPUT_KEYS = {"batch_id", "components", "requirements", "incompatible_lot_pairs"}
-COMPONENT_KEYS = {
-    "id",
-    "min_fraction",
-    "max_fraction",
-    "supplier",
-    "cost_per_kg",
-    "quality_index",
-    "viscosity_cp",
-    "activation_fee",
-    "alternate",
+INPUT_KEYS = {
+    "batch_id",
+    "components",
+    "supply_lots",
+    "lot_bundles",
+    "requirements",
+    "certification_runs",
+    "incompatible_lot_pairs",
 }
-ALTERNATE_KEYS = {
+COMPONENT_KEYS = {"id", "min_fraction", "max_fraction"}
+LOT_KEYS = {
     "lot_id",
     "supplier",
     "cost_per_kg",
     "quality_index",
     "viscosity_cp",
     "activation_fee",
+    "available_kg",
 }
+BUNDLE_KEYS = {"bundle_id", "lots"}
+RUN_KEYS = {"fractions", "cost_per_kg", "quality_index", "viscosity_cp"}
 REQUIREMENT_KEYS = {
     "min_quality",
     "max_viscosity",
     "batch_kg",
     "max_active",
     "max_active_per_supplier",
+    "additional_orders",
 }
+ORDER_KEYS = {"order_id", "batch_kg", "min_quality", "max_viscosity"}
+ID_RE = re.compile(r"[A-Z][A-Z0-9_-]{1,15}")
+EPS = 1e-10
 
 
 class Refusal(Exception):
@@ -49,11 +54,20 @@ class Refusal(Exception):
 
 def fail(kind):
     sys.stderr.write(f"运行拒收: {kind}\n")
-    raise SystemExit(1 if kind != "USAGE" else 2)
+    raise SystemExit(1)
 
 
 def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def valid_label(value, limit):
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= limit
+        and value == value.strip()
+        and not any(ord(char) < 32 or ord(char) == 127 for char in value)
+    )
 
 
 def pairs_hook(pairs):
@@ -65,114 +79,112 @@ def pairs_hook(pairs):
     return result
 
 
+def validate_lot(raw):
+    if not isinstance(raw, dict) or set(raw) != LOT_KEYS:
+        raise Refusal("BAD_INPUT")
+    if not isinstance(raw["lot_id"], str) or not ID_RE.fullmatch(raw["lot_id"]):
+        raise Refusal("BAD_INPUT")
+    if not isinstance(raw["supplier"], str) or not ID_RE.fullmatch(raw["supplier"]):
+        raise Refusal("BAD_INPUT")
+    if any(not number(raw[key]) for key in LOT_KEYS - {"lot_id", "supplier"}):
+        raise Refusal("BAD_INPUT")
+    if not 0 <= raw["cost_per_kg"] <= 1000:
+        raise Refusal("BAD_INPUT")
+    if not -100 <= raw["quality_index"] <= 100:
+        raise Refusal("BAD_INPUT")
+    if not 0.1 <= raw["viscosity_cp"] <= 1_000_000:
+        raise Refusal("BAD_INPUT")
+    if not 0 <= raw["activation_fee"] <= 100_000:
+        raise Refusal("BAD_INPUT")
+    if not 1 <= raw["available_kg"] <= 1_000_000_000:
+        raise Refusal("BAD_INPUT")
+    return {
+        "lot_id": raw["lot_id"],
+        "supplier": raw["supplier"],
+        "cost": float(raw["cost_per_kg"]),
+        "quality": float(raw["quality_index"]),
+        "viscosity": float(raw["viscosity_cp"]),
+        "activation_fee": float(raw["activation_fee"]),
+        "available_kg": float(raw["available_kg"]),
+    }
+
+
 def validate(payload):
     if not isinstance(payload, dict) or set(payload) != INPUT_KEYS:
         raise Refusal("BAD_INPUT")
     batch_id = payload["batch_id"]
-    if (
-        not isinstance(batch_id, str)
-        or not batch_id
-        or len(batch_id) > 64
-        or batch_id != batch_id.strip()
-        or any(ord(char) < 32 or ord(char) == 127 for char in batch_id)
-    ):
+    if not valid_label(batch_id, 64):
         raise Refusal("BAD_INPUT")
-    components = payload["components"]
-    if not isinstance(components, list) or not 3 <= len(components) <= 24:
+    raw_components = payload["components"]
+    if not isinstance(raw_components, list) or not 3 <= len(raw_components) <= 12:
         raise Refusal("BAD_INPUT")
-    seen = set()
-    seen_lots = set()
-    cleaned = []
-    for item in components:
-        if not isinstance(item, dict) or set(item) != COMPONENT_KEYS:
+    components = []
+    component_ids = set()
+    for raw in raw_components:
+        if not isinstance(raw, dict) or set(raw) != COMPONENT_KEYS:
             raise Refusal("BAD_INPUT")
-        identifier = item["id"]
-        if not isinstance(identifier, str) or not identifier or not identifier.isascii():
+        if not isinstance(raw["id"], str) or not ID_RE.fullmatch(raw["id"]):
             raise Refusal("BAD_INPUT")
-        if not identifier[0].isalpha() or identifier[0].isupper():
-            pass
-        if not (identifier[0].isalpha() and identifier[0].isupper()):
+        if raw["id"] in component_ids:
             raise Refusal("BAD_INPUT")
-        if len(identifier) < 2 or len(identifier) > 16:
+        component_ids.add(raw["id"])
+        if not number(raw["min_fraction"]) or not number(raw["max_fraction"]):
             raise Refusal("BAD_INPUT")
-        if not all(char.isupper() or char.isdigit() or char in "_-" for char in identifier):
+        if not 0 <= raw["min_fraction"] <= raw["max_fraction"] <= 1:
             raise Refusal("BAD_INPUT")
-        if identifier in seen:
-            raise Refusal("BAD_INPUT")
-        seen.add(identifier)
-        if any(
-            not number(item[key])
-            for key in COMPONENT_KEYS - {"id", "supplier", "alternate"}
-        ):
-            raise Refusal("BAD_INPUT")
-        low, high = item["min_fraction"], item["max_fraction"]
-        if not 0 <= low <= high <= 1:
-            raise Refusal("BAD_INPUT")
-        if not 0 <= item["cost_per_kg"] <= 1000:
-            raise Refusal("BAD_INPUT")
-        if not -100 <= item["quality_index"] <= 100:
-            raise Refusal("BAD_INPUT")
-        if not 0.1 <= item["viscosity_cp"] <= 1_000_000:
-            raise Refusal("BAD_INPUT")
-        if not 0 <= item["activation_fee"] <= 100_000:
-            raise Refusal("BAD_INPUT")
-        supplier = item["supplier"]
-        alternate = item["alternate"]
-        if (
-            not isinstance(supplier, str)
-            or not re.fullmatch(r"[A-Z][A-Z0-9_-]{1,15}", supplier)
-            or not isinstance(alternate, dict)
-            or set(alternate) != ALTERNATE_KEYS
-        ):
-            raise Refusal("BAD_INPUT")
-        if (
-            not isinstance(alternate["lot_id"], str)
-            or not re.fullmatch(r"[A-Z][A-Z0-9_-]{1,15}", alternate["lot_id"])
-            or alternate["lot_id"] in seen_lots
-            or not isinstance(alternate["supplier"], str)
-            or not re.fullmatch(r"[A-Z][A-Z0-9_-]{1,15}", alternate["supplier"])
-        ):
-            raise Refusal("BAD_INPUT")
-        seen_lots.add(alternate["lot_id"])
-        if any(not number(alternate[key]) for key in ALTERNATE_KEYS - {"lot_id", "supplier"}):
-            raise Refusal("BAD_INPUT")
-        if not 0 <= alternate["cost_per_kg"] <= 1000:
-            raise Refusal("BAD_INPUT")
-        if not -100 <= alternate["quality_index"] <= 100:
-            raise Refusal("BAD_INPUT")
-        if not 0.1 <= alternate["viscosity_cp"] <= 1_000_000:
-            raise Refusal("BAD_INPUT")
-        if not 0 <= alternate["activation_fee"] <= 100_000:
-            raise Refusal("BAD_INPUT")
-        cleaned.append(
+        components.append(
             {
-                "id": identifier,
-                "min": float(low),
-                "max": float(high),
-                "options": [
-                    {
-                        "lot_id": "primary",
-                        "supplier": supplier,
-                        "cost": float(item["cost_per_kg"]),
-                        "quality": float(item["quality_index"]),
-                        "viscosity": float(item["viscosity_cp"]),
-                        "activation_fee": float(item["activation_fee"]),
-                    },
-                    {
-                        "lot_id": alternate["lot_id"],
-                        "supplier": alternate["supplier"],
-                        "cost": float(alternate["cost_per_kg"]),
-                        "quality": float(alternate["quality_index"]),
-                        "viscosity": float(alternate["viscosity_cp"]),
-                        "activation_fee": float(alternate["activation_fee"]),
-                    },
-                ],
+                "id": raw["id"],
+                "min": float(raw["min_fraction"]),
+                "max": float(raw["max_fraction"]),
             }
         )
+
+    raw_lots = payload["supply_lots"]
+    if not isinstance(raw_lots, list) or len(raw_lots) != 2 * len(components):
+        raise Refusal("BAD_INPUT")
+    lots = []
+    lots_by_id = {}
+    for raw in raw_lots:
+        lot = validate_lot(raw)
+        if lot["lot_id"] in lots_by_id:
+            raise Refusal("BAD_INPUT")
+        lots.append(lot)
+        lots_by_id[lot["lot_id"]] = lot
+
+    raw_bundles = payload["lot_bundles"]
+    if not isinstance(raw_bundles, list) or len(raw_bundles) != len(components):
+        raise Refusal("BAD_INPUT")
+    bundles = []
+    bundle_ids = set()
+    bundled_lot_ids = set()
+    for raw in raw_bundles:
+        if not isinstance(raw, dict) or set(raw) != BUNDLE_KEYS:
+            raise Refusal("BAD_INPUT")
+        if not isinstance(raw["bundle_id"], str) or not ID_RE.fullmatch(raw["bundle_id"]):
+            raise Refusal("BAD_INPUT")
+        if raw["bundle_id"] in bundle_ids:
+            raise Refusal("BAD_INPUT")
+        bundle_ids.add(raw["bundle_id"])
+        pair = raw["lots"]
+        if (
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or any(not isinstance(value, str) or value not in lots_by_id for value in pair)
+            or not pair[0] < pair[1]
+        ):
+            raise Refusal("BAD_INPUT")
+        if any(value in bundled_lot_ids for value in pair):
+            raise Refusal("BAD_INPUT")
+        bundled_lot_ids.update(pair)
+        bundles.append({"bundle_id": raw["bundle_id"], "lots": tuple(pair)})
+    if bundled_lot_ids != set(lots_by_id):
+        raise Refusal("BAD_INPUT")
+
     requirements = payload["requirements"]
     if not isinstance(requirements, dict) or set(requirements) != REQUIREMENT_KEYS:
         raise Refusal("BAD_INPUT")
-    if any(not number(requirements[key]) for key in REQUIREMENT_KEYS):
+    if any(not number(requirements[key]) for key in REQUIREMENT_KEYS - {"additional_orders"}):
         raise Refusal("BAD_INPUT")
     if not -100 <= requirements["min_quality"] <= 100:
         raise Refusal("BAD_INPUT")
@@ -181,33 +193,83 @@ def validate(payload):
     if not 1 <= requirements["batch_kg"] <= 1_000_000:
         raise Refusal("BAD_INPUT")
     max_active = requirements["max_active"]
+    max_per_supplier = requirements["max_active_per_supplier"]
+    if isinstance(max_active, bool) or not isinstance(max_active, int) or not 2 <= max_active <= 3:
+        raise Refusal("BAD_INPUT")
     if (
-        isinstance(max_active, bool)
-        or not isinstance(max_active, int)
-        or not 2 <= max_active <= 4
+        isinstance(max_per_supplier, bool)
+        or not isinstance(max_per_supplier, int)
+        or not 1 <= max_per_supplier <= 4
     ):
         raise Refusal("BAD_INPUT")
-    supplier_limit = requirements["max_active_per_supplier"]
-    if (
-        isinstance(supplier_limit, bool)
-        or not isinstance(supplier_limit, int)
-        or not 1 <= supplier_limit <= 4
-    ):
+    raw_orders = requirements["additional_orders"]
+    if not isinstance(raw_orders, list) or len(raw_orders) > 2:
         raise Refusal("BAD_INPUT")
-    if sum(item["min"] for item in cleaned) > 1 + 1e-12:
+    additional_orders = []
+    order_ids = {"PRIMARY"}
+    for raw_order in raw_orders:
+        if not isinstance(raw_order, dict) or set(raw_order) != ORDER_KEYS:
+            raise Refusal("BAD_INPUT")
+        if not isinstance(raw_order["order_id"], str) or not ID_RE.fullmatch(raw_order["order_id"]):
+            raise Refusal("BAD_INPUT")
+        if raw_order["order_id"] in order_ids:
+            raise Refusal("BAD_INPUT")
+        order_ids.add(raw_order["order_id"])
+        if any(not number(raw_order[key]) for key in ORDER_KEYS - {"order_id"}):
+            raise Refusal("BAD_INPUT")
+        if not -100 <= raw_order["min_quality"] <= 100:
+            raise Refusal("BAD_INPUT")
+        if not 0 < raw_order["max_viscosity"]:
+            raise Refusal("BAD_INPUT")
+        if not 1 <= raw_order["batch_kg"] <= 1_000_000:
+            raise Refusal("BAD_INPUT")
+        additional_orders.append(dict(raw_order))
+    if sum(item["min"] for item in components) > 1 + 1e-12:
         raise Refusal("BAD_INPUT")
-    if sum(item["max"] for item in cleaned) < 1 - 1e-12:
+    if sum(item["max"] for item in components) < 1 - 1e-12:
         raise Refusal("BAD_INPUT")
-    pairs = payload["incompatible_lot_pairs"]
-    if not isinstance(pairs, list) or len(pairs) > 48:
+
+    raw_runs = payload["certification_runs"]
+    if not isinstance(raw_runs, list) or len(raw_runs) != len(components):
         raise Refusal("BAD_INPUT")
-    cleaned_pairs = []
+    runs = []
+    for raw in raw_runs:
+        if not isinstance(raw, dict) or set(raw) != RUN_KEYS:
+            raise Refusal("BAD_INPUT")
+        row = raw["fractions"]
+        if not isinstance(row, list) or len(row) != len(components):
+            raise Refusal("BAD_INPUT")
+        if any(not number(value) or not 0 <= value <= 1 for value in row):
+            raise Refusal("BAD_INPUT")
+        if abs(sum(row) - 1.0) > 1e-9:
+            raise Refusal("BAD_INPUT")
+        if any(not number(raw[key]) for key in RUN_KEYS - {"fractions"}):
+            raise Refusal("BAD_INPUT")
+        if not 0 <= raw["cost_per_kg"] <= 1000:
+            raise Refusal("BAD_INPUT")
+        if not -100 <= raw["quality_index"] <= 100:
+            raise Refusal("BAD_INPUT")
+        if not 0.1 <= raw["viscosity_cp"] <= 1_000_000:
+            raise Refusal("BAD_INPUT")
+        runs.append(
+            {
+                "fractions": [float(value) for value in row],
+                "cost": float(raw["cost_per_kg"]),
+                "quality": float(raw["quality_index"]),
+                "viscosity": float(raw["viscosity_cp"]),
+            }
+        )
+
+    raw_pairs = payload["incompatible_lot_pairs"]
+    if not isinstance(raw_pairs, list) or len(raw_pairs) > 48:
+        raise Refusal("BAD_INPUT")
+    incompatible_pairs = []
     seen_pairs = set()
-    for pair in pairs:
+    for pair in raw_pairs:
         if (
             not isinstance(pair, list)
             or len(pair) != 2
-            or any(not isinstance(value, str) or value not in seen_lots for value in pair)
+            or any(not isinstance(value, str) or value not in lots_by_id for value in pair)
             or pair[0] >= pair[1]
         ):
             raise Refusal("BAD_INPUT")
@@ -215,11 +277,97 @@ def validate(payload):
         if key in seen_pairs:
             raise Refusal("BAD_INPUT")
         seen_pairs.add(key)
-        cleaned_pairs.append(key)
-    return batch_id, cleaned, requirements, cleaned_pairs
+        incompatible_pairs.append(key)
+    return (
+        batch_id,
+        components,
+        lots_by_id,
+        bundles,
+        {**requirements, "additional_orders": additional_orders},
+        runs,
+        incompatible_pairs,
+    )
 
 
-EPS = 1e-10
+def solve_three(matrix, cost, quality, viscosity):
+    size = len(matrix)
+    augmented = [
+        [float(value) for value in matrix[row]]
+        + [float(cost[row]), float(quality[row]), float(viscosity[row])]
+        for row in range(size)
+    ]
+    for column in range(size):
+        pivot = max(range(column, size), key=lambda row: abs(augmented[row][column]))
+        if abs(augmented[pivot][column]) < 1e-11:
+            raise Refusal("BAD_MODEL")
+        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+        divisor = augmented[column][column]
+        augmented[column] = [value / divisor for value in augmented[column]]
+        for row in range(size):
+            if row == column:
+                continue
+            factor = augmented[row][column]
+            if factor == 0:
+                continue
+            augmented[row] = [
+                value - factor * pivot_value
+                for value, pivot_value in zip(augmented[row], augmented[column])
+            ]
+    return [
+        [augmented[row][size + metric] for row in range(size)]
+        for metric in range(3)
+    ]
+
+
+def recover_bundle_map(components, lots_by_id, bundles, runs):
+    matrix = [run["fractions"] for run in runs]
+    recovered_cost, recovered_quality, recovered_viscosity = solve_three(
+        matrix,
+        [run["cost"] for run in runs],
+        [run["quality"] for run in runs],
+        [run["viscosity"] for run in runs],
+    )
+    bundle_for_lot = {
+        lot_id: bundle["bundle_id"]
+        for bundle in bundles
+        for lot_id in bundle["lots"]
+    }
+    mapped = []
+    used_lots = set()
+    used_bundles = set()
+    for index in range(len(components)):
+        target = (
+            recovered_cost[index],
+            recovered_quality[index],
+            recovered_viscosity[index],
+        )
+        matches = [
+            lot
+            for lot in lots_by_id.values()
+            if all(
+                abs(actual - expected) <= 1e-7
+                for actual, expected in zip(
+                    (lot["cost"], lot["quality"], lot["viscosity"]),
+                    target,
+                )
+            )
+        ]
+        if len(matches) != 1:
+            raise Refusal("BAD_MODEL")
+        selected = matches[0]
+        if selected["lot_id"] in used_lots:
+            raise Refusal("BAD_MODEL")
+        bundle_id = bundle_for_lot[selected["lot_id"]]
+        if bundle_id in used_bundles:
+            raise Refusal("BAD_MODEL")
+        used_lots.add(selected["lot_id"])
+        used_bundles.add(bundle_id)
+        bundle = next(item for item in bundles if item["bundle_id"] == bundle_id)
+        options = [lots_by_id[lot_id] for lot_id in bundle["lots"]]
+        mapped.append({**components[index], "bundle_id": bundle_id, "options": options})
+    if len(used_bundles) != len(bundles):
+        raise Refusal("BAD_MODEL")
+    return mapped
 
 
 class SimplexMax:
@@ -293,13 +441,10 @@ class SimplexMax:
                     continue
                 best_coefficient = self.tableau[leaving][entering]
                 best_ratio = self.tableau[leaving][self.n + 1] / best_coefficient
-                if (ratio, self.basic[row_index]) < (
-                    best_ratio,
-                    self.basic[leaving],
-                ):
+                if (ratio, self.basic[row_index]) < (best_ratio, self.basic[leaving]):
                     leaving = row_index
             if leaving < 0:
-                raise Refusal("INFEASIBLE")
+                return None
             self.pivot(leaving, entering)
 
     def solve(self):
@@ -309,24 +454,18 @@ class SimplexMax:
                 row = index
         if self.tableau[row][self.n + 1] < -EPS:
             self.pivot(row, self.n)
-            if (
-                not self.simplex(2)
-                or self.tableau[self.m + 1][self.n + 1] < -EPS
-            ):
+            if not self.simplex(2) or self.tableau[self.m + 1][self.n + 1] < -EPS:
                 return None
             for index in range(self.m):
                 if self.basic[index] != -1:
                     continue
-                entering = 0
-                for column in range(1, self.n + 1):
-                    if (
+                entering = min(
+                    range(self.n + 1),
+                    key=lambda column: (
                         self.tableau[index][column],
                         self.nonbasic[column],
-                    ) < (
-                        self.tableau[index][entering],
-                        self.nonbasic[entering],
-                    ):
-                        entering = column
+                    ),
+                )
                 self.pivot(index, entering)
         if not self.simplex(1):
             return None
@@ -338,10 +477,10 @@ class SimplexMax:
         return solution
 
 
-def constraints(components, requirements):
-    count = len(components)
-    lows = [item["min"] for item in components]
-    upper = [item["max"] - item["min"] for item in components]
+def constraints(selected, requirements):
+    count = len(selected)
+    lows = [item["min"] for item in selected]
+    upper = [item["max"] - item["min"] for item in selected]
     remaining = 1.0 - sum(lows)
     matrix = []
     right = []
@@ -350,13 +489,11 @@ def constraints(components, requirements):
         row[index] = 1.0
         matrix.append(row)
         right.append(upper[index])
-    quality_base = sum(item["quality"] * item["min"] for item in components)
-    viscosity_base = sum(
-        item["viscosity"] * item["min"] for item in components
-    )
-    matrix.append([-item["quality"] for item in components])
+    quality_base = sum(item["quality"] * item["min"] for item in selected)
+    viscosity_base = sum(item["viscosity"] * item["min"] for item in selected)
+    matrix.append([-item["quality"] for item in selected])
     right.append(quality_base - requirements["min_quality"])
-    matrix.append([item["viscosity"] for item in components])
+    matrix.append([item["viscosity"] for item in selected])
     right.append(requirements["max_viscosity"] - viscosity_base)
     matrix.append([1.0] * count)
     right.append(remaining)
@@ -371,14 +508,11 @@ def optimize_support(selected, requirements):
     shifted = SimplexMax(matrix, right, [-cost for cost in costs]).solve()
     if shifted is None:
         return None
-    best_shifted_cost = sum(costs[index] * shifted[index] for index in range(len(selected)))
+    minimum_cost = sum(costs[index] * shifted[index] for index in range(len(selected)))
     matrix.append(costs)
-    right.append(best_shifted_cost + 1.1e-10)
-
+    right.append(minimum_cost + 1.1e-10)
     for fixed in range(len(selected)):
-        objective = [
-            -1.0 if index == fixed else 0.0 for index in range(len(selected))
-        ]
+        objective = [-1.0 if index == fixed else 0.0 for index in range(len(selected))]
         shifted = SimplexMax(matrix, right, objective).solve()
         if shifted is None:
             return None
@@ -391,17 +525,15 @@ def optimize_support(selected, requirements):
         row[fixed] = -1.0
         matrix.append(row)
         right.append(-minimum + 1e-9)
-
-    fractions = [0.0] * len(selected)
+    fractions = []
     for local, item in enumerate(selected):
         value = item["min"] + shifted[local]
         if abs(value - item["min"]) <= 1e-8:
             value = item["min"]
         if abs(value - item["max"]) <= 1e-8:
             value = item["max"]
-        fractions[local] = max(0.0, min(1.0, value))
-    residual = 1.0 - sum(fractions)
-    if abs(residual) > 1e-8:
+        fractions.append(max(0.0, min(1.0, value)))
+    if abs(1.0 - sum(fractions)) > 1e-8:
         return None
     active = [index for index, value in enumerate(fractions) if value > 1e-9]
     variable_cost = sum(selected[index]["cost"] * fractions[index] for index in active)
@@ -411,27 +543,26 @@ def optimize_support(selected, requirements):
     return fractions, variable_cost, activation_cost, quality, viscosity
 
 
-def optimize(components, requirements, incompatible_pairs):
+def enumerate_candidates(components, requirements, incompatible_pairs):
     mandatory = [index for index, item in enumerate(components) if item["min"] > 0]
     max_active = requirements["max_active"]
     if len(mandatory) > max_active:
         raise Refusal("INFEASIBLE")
-    candidates = []
     optional = [index for index in range(len(components)) if index not in mandatory]
+    candidates = []
     for extra_count in range(max_active - len(mandatory) + 1):
         for extra in combinations(optional, extra_count):
             support = tuple(sorted(mandatory + list(extra)))
             for choice in product((0, 1), repeat=len(support)):
                 selected = []
-                lot_ids = ["primary"] * len(components)
+                lot_ids = [None] * len(components)
                 for local, original in enumerate(support):
-                    item = components[original]
-                    option = item["options"][choice[local]]
+                    component = components[original]
+                    option = component["options"][choice[local]]
                     selected.append(
                         {
-                            "id": item["id"],
-                            "min": item["min"],
-                            "max": item["max"],
+                            "min": component["min"],
+                            "max": component["max"],
                             "cost": option["cost"],
                             "quality": option["quality"],
                             "viscosity": option["viscosity"],
@@ -447,51 +578,157 @@ def optimize(components, requirements, incompatible_pairs):
                 local_fractions, variable_cost, activation_cost, quality, viscosity = solved
                 fractions = [0.0] * len(components)
                 supplier_counts = {}
+                active_lots = set()
                 for local, original in enumerate(support):
                     fractions[original] = local_fractions[local]
                     if local_fractions[local] > 1e-9:
                         supplier = selected[local]["supplier"]
                         supplier_counts[supplier] = supplier_counts.get(supplier, 0) + 1
-                if (
-                    sum(value > 1e-9 for value in fractions) > max_active
-                    or any(
-                        count > requirements["max_active_per_supplier"]
-                        for count in supplier_counts.values()
-                    )
+                        active_lots.add(selected[local]["lot_id"])
+                    else:
+                        lot_ids[original] = None
+                if any(
+                    count > requirements["max_active_per_supplier"]
+                    for count in supplier_counts.values()
                 ):
                     continue
-                chosen_lots = {
-                    selected[local]["lot_id"]
-                    for local, value in enumerate(local_fractions)
-                    if value > 1e-9
-                }
-                if any(left in chosen_lots and right in chosen_lots for left, right in incompatible_pairs):
+                if any(left in active_lots and right in active_lots for left, right in incompatible_pairs):
                     continue
-                candidate = (
-                    fractions,
-                    variable_cost,
-                    activation_cost,
-                    quality,
-                    viscosity,
-                    lot_ids,
-                )
                 candidates.append(
-                    (
-                        (
-                            variable_cost * requirements["batch_kg"] + activation_cost,
-                            tuple(fractions),
-                            tuple(lot_ids),
-                        ),
-                        candidate,
-                    )
+                    {
+                        "cost": variable_cost * requirements["batch_kg"] + activation_cost,
+                        "variable_cost": variable_cost,
+                        "batch_kg": requirements["batch_kg"],
+                        "fractions": fractions,
+                        "lot_ids": lot_ids,
+                        "activation_cost": activation_cost,
+                        "quality": quality,
+                        "viscosity": viscosity,
+                        "active_suppliers": {
+                            (original, selected[local]["supplier"])
+                            for local, original in enumerate(support)
+                            if local_fractions[local] > 1e-9
+                        },
+                        "used_lot_ids": set(active_lots),
+                        "lot_mass": {
+                            selected[local]["lot_id"]: local_fractions[local]
+                            * requirements["batch_kg"]
+                            for local in range(len(support))
+                            if local_fractions[local] > 1e-9
+                        },
+                    }
                 )
-    if not candidates:
+    return candidates
+
+
+def choose_best(candidates):
+    best_cost = min(item["cost"] for item in candidates)
+    tied = [item for item in candidates if abs(item["cost"] - best_cost) <= 1e-10]
+    return min(
+        tied,
+        key=lambda item: (
+            tuple(item["fractions"]),
+            tuple("" if value is None else value for value in item["lot_ids"]),
+        ),
+    )
+
+
+def optimize_plan(components, requirements, incompatible_pairs):
+    order_specs = [
+        {
+            "order_id": "PRIMARY",
+            "batch_kg": requirements["batch_kg"],
+            "min_quality": requirements["min_quality"],
+            "max_viscosity": requirements["max_viscosity"],
+        },
+        *requirements["additional_orders"],
+    ]
+    candidates_by_order = []
+    for order in order_specs:
+        order_requirements = {
+            **requirements,
+            "batch_kg": order["batch_kg"],
+            "min_quality": order["min_quality"],
+            "max_viscosity": order["max_viscosity"],
+        }
+        candidates_by_order.append(
+            enumerate_candidates(components, order_requirements, incompatible_pairs)
+        )
+    if any(not candidates for candidates in candidates_by_order):
         raise Refusal("INFEASIBLE")
-    best_key, best = min(candidates, key=lambda pair: pair[0])
-    for key, candidate in candidates:
-        if abs(key[0] - best_key[0]) <= 1e-10 and key[1] < best_key[1]:
-            best_key, best = key, candidate
-    return best
+
+    plans = []
+    for combination in product(*candidates_by_order):
+        active_components = {
+            index
+            for candidate in combination
+            for index, value in enumerate(candidate["fractions"])
+            if value > 1e-9
+        }
+        if len(active_components) > requirements["max_active"]:
+            continue
+        suppliers = {
+            pair for candidate in combination for pair in candidate["active_suppliers"]
+        }
+        supplier_counts = {}
+        for _, supplier in suppliers:
+            supplier_counts[supplier] = supplier_counts.get(supplier, 0) + 1
+        if any(
+            count > requirements["max_active_per_supplier"]
+            for count in supplier_counts.values()
+        ):
+            continue
+        used_lots = {
+            lot_id for candidate in combination for lot_id in candidate["used_lot_ids"]
+        }
+        lot_mass = {}
+        for candidate in combination:
+            for lot_id, mass in candidate["lot_mass"].items():
+                lot_mass[lot_id] = lot_mass.get(lot_id, 0.0) + mass
+        if any(
+            mass
+            > next(
+                lot["available_kg"]
+                for lot in components
+                for lot in lot["options"]
+                if lot["lot_id"] == lot_id
+            )
+            + 1e-9
+            for lot_id, mass in lot_mass.items()
+        ):
+            continue
+        activation_cost = sum(
+            next(
+                option["activation_fee"]
+                for component in components
+                for option in component["options"]
+                if option["lot_id"] == lot_id
+            )
+            for lot_id in used_lots
+        )
+        total_cost = sum(candidate["variable_cost"] * candidate["batch_kg"] for candidate in combination) + activation_cost
+        plans.append(
+            {
+                "cost": total_cost,
+                "activation_cost": activation_cost,
+                "orders": combination,
+            }
+        )
+    if not plans:
+        raise Refusal("INFEASIBLE")
+    best_cost = min(item["cost"] for item in plans)
+    tied = [item for item in plans if abs(item["cost"] - best_cost) <= 1e-10]
+    best = min(
+        tied,
+        key=lambda plan: tuple(
+            (
+                tuple(candidate["fractions"]),
+                tuple("" if value is None else value for value in candidate["lot_ids"]),
+            )
+            for candidate in plan["orders"]
+        ),
+    )
+    return order_specs, best
 
 
 def write_atomic(target, payload):
@@ -524,30 +761,60 @@ def main(argv):
         fail("USAGE")
     source, destination = Path(argv[1]), Path(argv[2])
     try:
-        raw = source.read_text(encoding="utf-8")
-        payload = json.loads(raw, object_pairs_hook=pairs_hook)
-        batch_id, components, requirements, incompatible_pairs = validate(payload)
-        fractions, variable_cost, activation_cost, quality, viscosity, lot_ids = optimize(
-            components, requirements, incompatible_pairs
-        )
-        payload = {
+        payload = json.loads(source.read_text(encoding="utf-8"), object_pairs_hook=pairs_hook)
+        (
+            batch_id,
+            components,
+            lots_by_id,
+            bundles,
+            requirements,
+            runs,
+            incompatible_pairs,
+        ) = validate(payload)
+        mapped = recover_bundle_map(components, lots_by_id, bundles, runs)
+        order_specs, best = optimize_plan(mapped, requirements, incompatible_pairs)
+        base = best["orders"][0]
+        result = {
             "batch_id": batch_id,
+            "bundle_map": [
+                {"id": component["id"], "bundle_id": component["bundle_id"]}
+                for component in mapped
+            ],
             "status": "optimal",
-            "activation_cost": activation_cost,
-            "total_cost": variable_cost * requirements["batch_kg"] + activation_cost,
+            "activation_cost": best["activation_cost"],
+            "total_cost": best["cost"],
             "allocation": [
                 {
-                    "id": item["id"],
-                    "lot_id": lot_ids[index] if fraction > 1e-9 else None,
+                    "id": component["id"],
+                    "lot_id": base["lot_ids"][index] if fraction > 1e-9 else None,
                     "fraction": fraction,
                     "mass_kg": fraction * requirements["batch_kg"],
                 }
-                for index, (item, fraction) in enumerate(zip(components, fractions))
+                for index, (component, fraction) in enumerate(zip(mapped, base["fractions"]))
             ],
-            "quality_index": quality,
-            "viscosity_cp": viscosity,
+            "quality_index": base["quality"],
+            "viscosity_cp": base["viscosity"],
+            "additional_orders": [
+                {
+                    "order_id": spec["order_id"],
+                    "allocation": [
+                        {
+                            "id": component["id"],
+                            "lot_id": candidate["lot_ids"][index] if fraction > 1e-9 else None,
+                            "fraction": fraction,
+                            "mass_kg": fraction * spec["batch_kg"],
+                        }
+                        for index, (component, fraction) in enumerate(zip(mapped, candidate["fractions"]))
+                    ],
+                    "quality_index": candidate["quality"],
+                    "viscosity_cp": candidate["viscosity"],
+                }
+                for spec, candidate in zip(order_specs[1:], best["orders"][1:])
+            ],
         }
-        encoded = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        encoded = (
+            json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
         write_atomic(destination, encoded)
         return 0
     except Refusal as exc:

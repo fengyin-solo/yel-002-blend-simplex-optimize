@@ -1,253 +1,335 @@
 {
   "gate_tests": [
-    "test_outputs.py::test_absent_batch_id_is_bad_input",
-    "test_outputs.py::test_absent_components_is_bad_input",
-    "test_outputs.py::test_absent_requirements_is_bad_input",
-    "test_outputs.py::test_extra_component_key_is_bad_input",
-    "test_outputs.py::test_absent_activation_fee_is_bad_input",
-    "test_outputs.py::test_extra_top_level_key_is_bad_input"
+    "test_outputs.py::test_bundle_mapping_is_recovered_independently_of_array_order",
+    "test_outputs.py::test_global_optimum_is_the_cheapest_vertex",
+    "test_outputs.py::test_absent_batch_id_is_bad_input"
   ],
   "schema_version": 1,
   "tests": {
+    "test_outputs.py::test_batch_id_visible_character_boundaries_are_accepted": {
+      "priority": "boundary",
+      "rationale": "验证工单号长度 1、64 和内部可见空格均可正常发布，避免边界只测拒收。",
+      "weight": 0.009
+    },
+    "test_outputs.py::test_absent_activation_fee_is_bad_input": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
+    },
+    "test_outputs.py::test_absent_components_is_bad_input": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
+    },
     "test_outputs.py::test_absent_parent_is_io_failure": {
       "priority": "recovery",
-      "rationale": "absent parent is io failure；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.017
+      "rationale": "验证失败重跑、原子发布与旧结果保留，避免交付状态被半成品覆盖。",
+      "weight": 0.011
+    },
+    "test_outputs.py::test_absent_requirements_is_bad_input": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_activation_fee_is_added_to_total_cost": {
       "priority": "supporting",
-      "rationale": "activation fee is added to total cost；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_active_component_uses_one_lot_only": {
       "priority": "supporting",
-      "rationale": "active component uses one lot only；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_active_count_respects_max_active": {
       "priority": "supporting",
-      "rationale": "active count respects max active；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
+    },
+    "test_outputs.py::test_additional_order_output_keys_are_exact": {
+      "priority": "schema",
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
+    },
+    "test_outputs.py::test_additional_order_output_shape_and_order": {
+      "priority": "schema",
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
+    },
+    "test_outputs.py::test_additional_order_record_has_exact_keys_and_id": {
+      "priority": "schema",
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
     },
     "test_outputs.py::test_allocation_has_exact_keys_and_input_order": {
       "priority": "schema",
-      "rationale": "allocation has exact keys and input order；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
-      "weight": 0.01
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
     },
     "test_outputs.py::test_alternate_lot_can_win_global_cost": {
       "priority": "core",
-      "rationale": "alternate lot can win global cost；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "rationale": "恢复批次归属并求联合全局最优，是本题主交付路径。",
+      "weight": 0.119
     },
     "test_outputs.py::test_alternate_lot_identifier_is_strict": {
       "priority": "supporting",
-      "rationale": "alternate lot identifier is strict；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_alternate_lot_value_range_is_refused": {
       "priority": "boundary",
-      "rationale": "alternate lot value range is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.013
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
+    },
+    "test_outputs.py::test_ambiguous_lot_properties_are_bad_model": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_bad_input_preserves_existing_result": {
       "priority": "recovery",
-      "rationale": "bad input preserves existing result；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.017
+      "rationale": "验证失败重跑、原子发布与旧结果保留，避免交付状态被半成品覆盖。",
+      "weight": 0.011
     },
     "test_outputs.py::test_boolean_fraction_is_refused": {
       "priority": "boundary",
-      "rationale": "boolean fraction is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_boolean_max_active_is_refused": {
       "priority": "boundary",
-      "rationale": "boolean max active is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
+    },
+    "test_outputs.py::test_certification_run_count_is_exact": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_component_id_syntax_is_strict[1A]": {
       "priority": "supporting",
-      "rationale": "component id syntax is strict；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_component_id_syntax_is_strict[A B]": {
       "priority": "supporting",
-      "rationale": "component id syntax is strict；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_component_id_syntax_is_strict[AAAAAAAAAAAAAAAAA]": {
       "priority": "supporting",
-      "rationale": "component id syntax is strict；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_component_id_syntax_is_strict[A]": {
       "priority": "supporting",
-      "rationale": "component id syntax is strict；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_component_id_syntax_is_strict[a-1]": {
       "priority": "supporting",
-      "rationale": "component id syntax is strict；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_duplicate_component_id_is_refused": {
       "priority": "boundary",
-      "rationale": "duplicate component id is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_duplicate_json_key_is_bad_input": {
       "priority": "boundary",
-      "rationale": "duplicate json key is bad input；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
+    },
+    "test_outputs.py::test_each_lot_must_appear_in_exactly_one_bundle": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_equal_cost_tie_uses_lexicographic_fraction_vector": {
       "priority": "supporting",
-      "rationale": "equal cost tie uses lexicographic fraction vector；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_equal_cost_uses_lot_id_tiebreak": {
       "priority": "supporting",
-      "rationale": "equal cost uses lot id tiebreak；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
+    },
+    "test_outputs.py::test_extra_component_key_is_bad_input": {
+      "priority": "boundary",
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_extra_requirement_key_is_bad_input": {
       "priority": "boundary",
-      "rationale": "extra requirement key is bad input；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
+    },
+    "test_outputs.py::test_extra_top_level_key_is_bad_input": {
+      "priority": "boundary",
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_fixed_activation_fee_changes_global_choice": {
       "priority": "core",
-      "rationale": "fixed activation fee changes global choice；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "rationale": "恢复批次归属并求联合全局最优，是本题主交付路径。",
+      "weight": 0.128
     },
     "test_outputs.py::test_fixed_fee_optimum_cannot_come_from_continuous_lp_alone": {
-      "priority": "core",
-      "rationale": "fixed fee optimum cannot come from continuous LP alone；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
+    },
+    "test_outputs.py::test_global_component_union_respects_active_limit": {
+      "priority": "boundary",
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_global_fixed_fee_choice_differs_from_unit_price_order": {
-      "priority": "core",
-      "rationale": "global fixed fee choice differs from unit price order；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
-    },
-    "test_outputs.py::test_global_optimum_is_the_cheapest_vertex": {
-      "priority": "core",
-      "rationale": "global optimum is the cheapest vertex；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "priority": "schema",
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
     },
     "test_outputs.py::test_inactive_component_has_null_lot_id": {
       "priority": "supporting",
-      "rationale": "inactive component has null lot id；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_incompatible_alternate_lots_are_not_combined": {
-      "priority": "supporting",
-      "rationale": "incompatible alternate lots are not combined；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "priority": "core",
+      "rationale": "恢复批次归属并求联合全局最优，是本题主交付路径。",
+      "weight": 0.13
     },
     "test_outputs.py::test_incompatible_pair_schema_is_strict": {
       "priority": "schema",
-      "rationale": "incompatible pair schema is strict；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
-      "weight": 0.01
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
+    },
+    "test_outputs.py::test_incompatible_pair_rejects_equal_lots": {
+      "priority": "supporting",
+      "rationale": "验证不相容批对必须由两个不同供货批组成，避免无效约束被静默接受。",
+      "weight": 0.002
+    },
+    "test_outputs.py::test_incompatible_pair_rejects_duplicate_entries": {
+      "priority": "supporting",
+      "rationale": "验证同一不相容批对不得重复登记，保证约束集合和供应商组合唯一。",
+      "weight": 0.002
     },
     "test_outputs.py::test_infeasible_constraints_are_refused": {
       "priority": "boundary",
-      "rationale": "infeasible constraints are refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_lot_choice_and_supplier_limit_are_joint": {
-      "priority": "core",
-      "rationale": "supplier active limit is joint constraint；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "priority": "boundary",
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_mass_is_fraction_times_batch": {
       "priority": "supporting",
-      "rationale": "mass is fraction times batch；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_maximum_component_batch_finishes_within_public_limit": {
       "priority": "boundary",
-      "rationale": "maximum component batch finishes within public limit；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_minimum_fraction_sum_above_one_is_refused": {
       "priority": "boundary",
-      "rationale": "minimum fraction sum above one is refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
+    },
+    "test_outputs.py::test_multiple_orders_share_activation_fee_once": {
+      "priority": "schema",
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
     },
     "test_outputs.py::test_near_equal_cost_uses_same_lexicographic_tiebreak": {
       "priority": "supporting",
-      "rationale": "near equal cost uses same lexicographic tiebreak；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_quality_and_viscosity_constraints_hold": {
       "priority": "core",
-      "rationale": "quality and viscosity constraints hold；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "rationale": "恢复批次归属并求联合全局最优，是本题主交付路径。",
+      "weight": 0.13
     },
     "test_outputs.py::test_quality_index_is_weighted_sum": {
       "priority": "supporting",
-      "rationale": "quality index is weighted sum；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_repeat_run_is_byte_identical": {
       "priority": "recovery",
-      "rationale": "repeat run is byte identical；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.017
+      "rationale": "验证失败重跑、原子发布与旧结果保留，避免交付状态被半成品覆盖。",
+      "weight": 0.011
     },
     "test_outputs.py::test_result_key_order_and_compact_bytes": {
       "priority": "schema",
-      "rationale": "result key order and compact bytes；这验证结构、类型或序列化外观，失败会使下游无法稳定消费结果。",
-      "weight": 0.01
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
     },
     "test_outputs.py::test_reversed_fraction_bounds_are_refused": {
       "priority": "boundary",
-      "rationale": "reversed fraction bounds are refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
-    "test_outputs.py::test_sixteen_components_are_accepted": {
+    "test_outputs.py::test_shared_lot_inventory_is_global_across_orders": {
+      "priority": "schema",
+      "rationale": "验证精确键集合、类型与序列化外观，避免下游解析产生歧义或丢字段。",
+      "weight": 0.006
+    },
+    "test_outputs.py::test_singular_certification_matrix_is_bad_model": {
       "priority": "supporting",
-      "rationale": "sixteen components are accepted；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_success_is_quiet": {
       "priority": "supporting",
-      "rationale": "success is quiet；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_success_leaves_no_temporary_files": {
       "priority": "recovery",
-      "rationale": "success leaves no temporary files；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.017
+      "rationale": "验证失败重跑、原子发布与旧结果保留，避免交付状态被半成品覆盖。",
+      "weight": 0.011
     },
     "test_outputs.py::test_supplier_active_limit_is_joint_constraint": {
       "priority": "core",
-      "rationale": "supplier active limit is joint constraint；这是任务的主交付路径，失败意味着核心业务结果不可用。",
-      "weight": 0.075
+      "rationale": "恢复批次归属并求联合全局最优，是本题主交付路径。",
+      "weight": 0.13
     },
     "test_outputs.py::test_tiebreak_repeat_is_stable": {
       "priority": "recovery",
-      "rationale": "tiebreak repeat is stable；这验证失败、重跑或恢复不变量，失败会造成旧数据和台账不一致。",
-      "weight": 0.017
+      "rationale": "验证失败重跑、原子发布与旧结果保留，避免交付状态被半成品覆盖。",
+      "weight": 0.011
     },
     "test_outputs.py::test_too_many_mandatory_components_is_infeasible": {
-      "priority": "boundary",
-      "rationale": "too many mandatory components is infeasible；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
+    },
+    "test_outputs.py::test_twelve_components_are_accepted": {
+      "priority": "supporting",
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.005
     },
     "test_outputs.py::test_two_components_are_refused": {
       "priority": "boundary",
-      "rationale": "two components are refused；这验证公开边界和拒收口径，失败会产生越界输入或错误放行。",
-      "weight": 0.012
+      "rationale": "验证公开边界、拒收口径与不可行处理，避免越界输入被静默接受。",
+      "weight": 0.008
     },
     "test_outputs.py::test_two_file_arguments_are_accepted": {
       "priority": "supporting",
-      "rationale": "two file arguments are accepted；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     },
     "test_outputs.py::test_viscosity_is_weighted_sum": {
       "priority": "supporting",
-      "rationale": "viscosity is weighted sum；这补充验证外围业务约束，失败会降低交付完整性和可运维性。",
-      "weight": 0.007
+      "rationale": "补充验证外围业务不变量、输出一致性与失败保护，避免局部修复掩盖回归。",
+      "weight": 0.004
     }
   },
   "weight_policy": {

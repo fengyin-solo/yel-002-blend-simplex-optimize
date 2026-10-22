@@ -1,0 +1,27 @@
+schema_version = "1.3"
+
+[task]
+name = "local/blend-simplex-optimize"
+authors = [{ name = "fengyin" }]
+description = "Find the least-cost feasible solvent blend under composition, quality, and viscosity constraints."
+keywords = ["optimization", "linear-programming", "blending", "vertex-enumeration"]
+
+[agent]
+timeout_sec = 3600
+
+[environment]
+build_timeout_sec = 600
+cpus = 2
+memory_mb = 2048
+storage_mb = 4096
+gpus = 0
+allow_internet = true
+
+[verifier]
+timeout_sec = 600
+
+[metadata]
+difficulty = "hard"
+category = "optimization"
+tags = ["linear-programming", "feasibility", "global-optimum", "serialization"]
+expert_time_estimate = "75m"
